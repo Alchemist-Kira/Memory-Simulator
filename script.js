@@ -110,7 +110,6 @@ function renderAlgoButtons() {
 }
 
 function renderProcesses() {
-    els.processesList.innerHTML = '';
     els.processCount.textContent = `${state.processes.length} items`;
 
     if (state.processes.length === 0) {
@@ -118,49 +117,131 @@ function renderProcesses() {
         return;
     }
 
+    // Remove empty message if it exists
+    if (els.processesList.querySelector('.text-center')) {
+        els.processesList.innerHTML = '';
+    }
+
+    // Sync DOM with State
+    const existingIds = new Set();
+
     state.processes.forEach((p, idx) => {
-        const div = document.createElement('div');
+        const domId = `proc-${p.id}`; // Use stable ID based on process ID (which changes on reorder, effectively position based for now?)
+        // Actually, if we renumber IDs on drag, p.id changes.
+        // But for simulation highlighting, we just want the row at index X to highlight.
+        // Let's rely on dataset-index for order, but use a unique key if possible?
+        // User wants renumbering, so ID basically EQUALS Index + 1.
+        // So `proc-${p.id}` is effectively `proc-${index+1}`.
+
+        existingIds.add(domId);
+
+        let div = document.getElementById(domId);
         const isCurrent = idx === state.currentProcessIndex && state.isSimulating;
 
         let bgClass = 'bg-slate-900 border-slate-700';
         if (p.allocated) bgClass = 'bg-cyan-900/20 border-cyan-800';
         else if (isCurrent) bgClass = 'bg-yellow-900/20 border-yellow-700 ring-1 ring-yellow-500';
 
-        div.className = `flex items-center justify-between p-3 rounded-lg border transition-all fade-in ${bgClass}`;
+        const finalClass = `draggable flex items-center justify-between p-3 rounded-lg border transition-all duration-300 fade-in ${bgClass}`;
 
-        div.innerHTML = `
-            <div class="flex items-center gap-3">
-                <div class="w-2 h-2 rounded-full ${p.allocated ? 'bg-cyan-500' : 'bg-slate-500'}"></div>
+        if (!div) {
+            // Create new
+            div = document.createElement('div');
+            div.id = domId;
+            div.draggable = true;
+            // Add static listeners once
+            div.addEventListener('dragstart', handleDragStart);
+            div.addEventListener('dragend', handleDragEnd);
+            div.addEventListener('dragover', handleDragOver);
+            div.addEventListener('drop', handleDrop);
+            els.processesList.appendChild(div);
+        }
+
+        // Update Attributes & Content (Only if changed to avoid thrashing, though className is cheap)
+        if (div.className !== finalClass) div.className = finalClass;
+        div.dataset.index = idx;
+        div.dataset.type = 'process';
+
+        // Update Inner HTML
+        // We can optimize this by only updating text nodes if we really wanted to, but innerHTML is okay for small content if the container is stable.
+        // To prevent inner element flickering (like icon re-renders), let's compare.
+        const newHTML = `
+            <div class="flex items-center gap-3 pointer-events-none">
+                <div class="w-2 h-2 rounded-full ${p.allocated ? 'bg-cyan-500' : 'bg-slate-500'} transition-colors duration-300"></div>
                 <span class="font-mono text-sm">P${p.id}</span>
             </div>
-            <div class="flex items-center gap-4">
+            <div class="flex items-center gap-4 pointer-events-none">
                 <span class="font-bold text-sm">${p.size} KB</span>
                 ${!state.isSimulating && !p.allocated ? `
-                    <button onclick="removeProcess(${p.id})" class="text-white hover:text-red-400">
+                    <button onclick="removeProcess(${p.id})" class="text-white hover:text-red-400 pointer-events-auto">
                         <i data-lucide="trash-2" class="w-4 h-4"></i>
                     </button>
                 ` : ''}
             </div>
         `;
-        els.processesList.appendChild(div);
+
+        if (div.innerHTML !== newHTML) {
+            div.innerHTML = newHTML;
+            lucide.createIcons(); // usage of icons inside re-render
+        }
+    });
+
+    // Cleanup removed nodes
+    Array.from(els.processesList.children).forEach(child => {
+        if (child.id && !existingIds.has(child.id)) {
+            child.remove();
+        }
     });
 }
 
 function renderPartitionsList() {
-    els.partitionsList.innerHTML = '';
-    state.partitions.forEach(p => {
-        const div = document.createElement('div');
-        div.className = 'group relative bg-slate-900 border border-slate-700 px-3 py-2 rounded-md flex items-center gap-2 fade-in';
-        div.innerHTML = `
-            <span class="text-xs font-mono text-slate-400">Block ${p.id}</span>
-            <span class="font-bold text-sm text-cyan-300">${p.size} KB</span>
+    // Sync DOM with State for Partitions
+    const existingIds = new Set();
+
+    state.partitions.forEach((p, index) => {
+        const domId = `part-${p.id}`; // Use ID-based key
+        existingIds.add(domId);
+
+        let div = document.getElementById(domId);
+        const finalClass = 'draggable group relative bg-slate-900 border border-slate-700 px-3 py-2 rounded-md flex items-center gap-2 fade-in';
+
+        if (!div) {
+            div = document.createElement('div');
+            div.id = domId;
+            div.className = finalClass;
+            div.draggable = true;
+            div.addEventListener('dragstart', handleDragStart);
+            div.addEventListener('dragend', handleDragEnd);
+            div.addEventListener('dragover', handleDragOver);
+            div.addEventListener('drop', handleDrop);
+            els.partitionsList.appendChild(div);
+        }
+
+        if (div.className !== finalClass) div.className = finalClass;
+        div.dataset.index = index;
+        div.dataset.type = 'partition';
+
+        const newHTML = `
+            <span class="text-xs font-mono text-slate-400 pointer-events-none">Block ${p.id}</span>
+            <span class="font-bold text-sm text-cyan-300 pointer-events-none">${p.size} KB</span>
             ${!state.isSimulating && !p.process ? `
-                <button onclick="removePartition(${p.id})" class="opacity-0 group-hover:opacity-100 absolute -top-2 -right-2 bg-red-500 rounded-full p-1 transition-opacity">
+                <button onclick="removePartition(${p.id})" class="opacity-0 group-hover:opacity-100 absolute -top-2 -right-2 bg-red-500 rounded-full p-1 transition-opacity pointer-events-auto">
                     <i data-lucide="trash-2" class="w-3 h-3 text-white"></i>
                 </button>
             ` : ''}
         `;
-        els.partitionsList.appendChild(div);
+
+        if (div.innerHTML !== newHTML) {
+            div.innerHTML = newHTML;
+            lucide.createIcons();
+        }
+    });
+
+    // Cleanup
+    Array.from(els.partitionsList.children).forEach(child => {
+        if (child.id && !existingIds.has(child.id)) {
+            child.remove();
+        }
     });
 }
 
@@ -232,7 +313,96 @@ function renderLogs() {
     els.logsContainer.scrollTop = els.logsContainer.scrollHeight;
 }
 
-// --- Logic & Events ---
+// --- Drag & Drop Logic ---
+
+let draggedItem = null;
+
+function handleDragStart(e) {
+    if (state.isSimulating) {
+        e.preventDefault();
+        return;
+    }
+    draggedItem = this;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', this.dataset.index);
+    e.dataTransfer.setData('type', this.dataset.type);
+
+    // Slight delay to allow the ghost image to be created before hiding the element
+    setTimeout(() => {
+        this.classList.add('dragging');
+    }, 0);
+}
+
+function handleDragEnd(e) {
+    this.classList.remove('dragging');
+    draggedItem = null;
+
+    // Remove drag-over styles from all items
+    document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+}
+
+function handleDragOver(e) {
+    if (e.preventDefault) {
+        e.preventDefault(); // Necessary. Allows us to drop.
+    }
+    e.dataTransfer.dropEffect = 'move';
+    return false;
+}
+
+function handleDrop(e) {
+    e.stopPropagation(); // stops the browser from redirecting.
+
+    const type = e.dataTransfer.getData('type');
+    const fromIndex = parseInt(e.dataTransfer.getData('text/plain'));
+    const toIndex = parseInt(this.dataset.index);
+    const targetType = this.dataset.type;
+
+    // Ensure we are dropping on the same type of list
+    if (type !== targetType || isNaN(fromIndex) || isNaN(toIndex)) {
+        return false;
+    }
+
+    if (fromIndex !== toIndex) {
+        // Reorder array
+        if (type === 'process') {
+            const item = state.processes.splice(fromIndex, 1)[0];
+            state.processes.splice(toIndex, 0, item);
+
+            // Renumber Processes
+            state.processes.forEach((p, i) => {
+                p.id = i + 1;
+            });
+
+            renderProcesses();
+        } else if (type === 'partition') {
+            const item = state.partitions.splice(fromIndex, 1)[0];
+            state.partitions.splice(toIndex, 0, item);
+
+            // Renumber Partitions and update process references
+            const idMap = new Map();
+            state.partitions.forEach((p, i) => {
+                const oldId = p.id;
+                const newId = i + 1;
+                idMap.set(oldId, newId);
+                p.id = newId;
+            });
+
+            // Update attached processes (if any have valid partition refs)
+            state.processes.forEach(p => {
+                if (p.partitionId !== null && idMap.has(p.partitionId)) {
+                    p.partitionId = idMap.get(p.partitionId);
+                }
+            });
+
+            renderAll(); // Rerender all because partitions affect memory bar
+        }
+        lucide.createIcons(); // Refresh icons
+    }
+
+    return false;
+}
+
+// --- Event Listeners ---
 
 function findPartition(processSize) {
     let candidateIndex = -1;
