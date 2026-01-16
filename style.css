@@ -38,6 +38,28 @@
     }
 }
 
+/* Drag and Drop */
+.draggable {
+    cursor: grab;
+}
+
+.draggable:active {
+    cursor: grabbing;
+}
+
+.dragging {
+    opacity: 0.5;
+    border: 2px dashed #06b6d4;
+    /* Cyan-500 */
+    background: #0f172a;
+    /* Slate-900 */
+}
+
+/* Prevent interaction with children while dragging to avoid issues */
+.dragging * {
+    pointer-events: none;
+}
+
 body {
     font-family: system-ui, -apple-system, sans-serif;
 }
