@@ -54,7 +54,41 @@ const els = {
 function addLog(message, type = 'info') {
     const logEntry = { message, type, id: Date.now() };
     state.logs.push(logEntry);
-    renderLogs();
+
+    // Append directly to DOM to prevent flashing
+    const div = document.createElement('div');
+    let colorClass = 'text-slate-300';
+    if (type === 'error') colorClass = 'text-red-400';
+    else if (type === 'success') colorClass = 'text-cyan-400';
+    else if (type === 'trace') colorClass = 'text-slate-500 text-xs ml-4 border-l border-slate-800 pl-2';
+
+    div.className = `fade-in ${colorClass}`;
+    const time = new Date(logEntry.id).toLocaleTimeString();
+    div.innerHTML = `<span class="opacity-50 mr-2">[${time}]</span>${message}`;
+    els.logsContainer.appendChild(div);
+    els.logsContainer.scrollTop = els.logsContainer.scrollHeight;
+}
+
+function rebuildLogs() {
+    els.logsContainer.innerHTML = '';
+    if (state.logs.length === 0) {
+        els.logsContainer.innerHTML = '<div class="text-slate-700">Waiting for simulation to start...</div>';
+        return;
+    }
+
+    state.logs.forEach(log => {
+        const div = document.createElement('div');
+        let colorClass = 'text-slate-300';
+        if (log.type === 'error') colorClass = 'text-red-400';
+        else if (log.type === 'success') colorClass = 'text-cyan-400';
+        else if (log.type === 'trace') colorClass = 'text-slate-500 text-xs ml-4 border-l border-slate-800 pl-2';
+
+        div.className = `fade-in ${colorClass}`;
+        const time = new Date(log.id).toLocaleTimeString();
+        div.innerHTML = `<span class="opacity-50 mr-2">[${time}]</span>${log.message}`;
+        els.logsContainer.appendChild(div);
+    });
+    els.logsContainer.scrollTop = els.logsContainer.scrollHeight;
 }
 
 function getFragmentationColor(partitionSize, processSize) {
@@ -73,6 +107,7 @@ function renderAll() {
     renderMemoryBar();
     renderControls();
     lucide.createIcons();
+    // note: rebuildLogs() is NOT called here to prevent flashing
 }
 
 function renderControls() {
@@ -293,7 +328,6 @@ function renderMemoryBar() {
         els.memoryBar.appendChild(div);
     });
 }
-
 function renderLogs() {
     els.logsContainer.innerHTML = '';
     if (state.logs.length === 0) {
@@ -303,9 +337,12 @@ function renderLogs() {
 
     state.logs.forEach(log => {
         const div = document.createElement('div');
-        div.className = `fade-in ${log.type === 'error' ? 'text-red-400' :
-            log.type === 'success' ? 'text-cyan-400' : 'text-slate-300'
-            }`;
+        let colorClass = 'text-slate-300';
+        if (log.type === 'error') colorClass = 'text-red-400';
+        else if (log.type === 'success') colorClass = 'text-cyan-400';
+        else if (log.type === 'trace') colorClass = 'text-slate-500 text-xs ml-4 border-l border-slate-800 pl-2';
+
+        div.className = `fade-in ${colorClass}`;
         const time = new Date(log.id).toLocaleTimeString();
         div.innerHTML = `<span class="opacity-50 mr-2">[${time}]</span>${log.message}`;
         els.logsContainer.appendChild(div);
@@ -404,59 +441,123 @@ function handleDrop(e) {
 
 // --- Event Listeners ---
 
-function findPartition(processSize) {
+function findPartitionWithLog(processSize) {
     let candidateIndex = -1;
+    let logs = [];
 
     if (state.selectedAlgorithm === ALGORITHMS.FIRST_FIT) {
-        candidateIndex = state.partitions.findIndex(p => p.process === null && p.size >= processSize);
+        logs.push(`Running First Fit: Checking partitions sequentially...`);
+        for (let i = 0; i < state.partitions.length; i++) {
+            const p = state.partitions[i];
+            const prefix = `Block ${p.id} (${p.size}KB)`;
+
+            if (p.process !== null) {
+                logs.push(`${prefix}: Skipped (Already allocated to P${p.process.id})`);
+                continue;
+            }
+
+            if (p.size >= processSize) {
+                logs.push(`${prefix}: Fits! (First available match found)`);
+                candidateIndex = i;
+                break;
+            } else {
+                logs.push(`${prefix}: Too small (Needs ${processSize}KB)`);
+            }
+        }
     }
     else if (state.selectedAlgorithm === ALGORITHMS.BEST_FIT) {
+        logs.push(`Running Best Fit: Searching for the smallest sufficient partition...`);
         let bestDiff = Infinity;
+
         state.partitions.forEach((p, index) => {
-            if (p.process === null && p.size >= processSize) {
+            const prefix = `Block ${p.id} (${p.size}KB)`;
+
+            if (p.process !== null) {
+                logs.push(`${prefix}: Skipped (Occupied)`);
+                return;
+            }
+
+            if (p.size >= processSize) {
                 const diff = p.size - processSize;
                 if (diff < bestDiff) {
+                    logs.push(`${prefix}: potential candidate (Wasted: ${diff}KB) - New Best Fit`);
                     bestDiff = diff;
                     candidateIndex = index;
+                } else {
+                    logs.push(`${prefix}: fits (Wasted: ${diff}KB) but not better than current best (${bestDiff}KB)`);
                 }
+            } else {
+                logs.push(`${prefix}: Too small`);
             }
         });
+
+        if (candidateIndex !== -1) {
+            logs.push(`Selected Block ${state.partitions[candidateIndex].id} as Best Fit.`);
+        }
     }
     else if (state.selectedAlgorithm === ALGORITHMS.WORST_FIT) {
+        logs.push(`Running Worst Fit: Searching for the largest sufficient partition...`);
         let worstDiff = -1;
+
         state.partitions.forEach((p, index) => {
-            if (p.process === null && p.size >= processSize) {
+            const prefix = `Block ${p.id} (${p.size}KB)`;
+
+            if (p.process !== null) {
+                logs.push(`${prefix}: Skipped (Occupied)`);
+                return;
+            }
+
+            if (p.size >= processSize) {
                 const diff = p.size - processSize;
                 if (diff > worstDiff) {
+                    logs.push(`${prefix}: potential candidate (Wasted: ${diff}KB) - New Worst Fit`);
                     worstDiff = diff;
                     candidateIndex = index;
+                } else {
+                    logs.push(`${prefix}: fits (Wasted: ${diff}KB) but not better than current worst (${worstDiff}KB)`);
                 }
+            } else {
+                logs.push(`${prefix}: Too small`);
             }
         });
+
+        if (candidateIndex !== -1) {
+            logs.push(`Selected Block ${state.partitions[candidateIndex].id} as Worst Fit.`);
+        }
     }
     else if (state.selectedAlgorithm === ALGORITHMS.NEXT_FIT) {
-        let found = false;
+        logs.push(`Running Next Fit: Searching from last allocated index (${state.lastAllocatedIndex})...`);
         let count = 0;
         let ptr = state.lastAllocatedIndex;
         const len = state.partitions.length;
+        let found = false;
 
         while (count < len) {
             const index = ptr % len;
             const p = state.partitions[index];
+            const prefix = `Block ${p.id} (${p.size}KB)`;
+
             if (p.process === null && p.size >= processSize) {
+                logs.push(`${prefix}: Fits! (Selected at index ${index})`);
                 candidateIndex = index;
                 found = true;
                 break;
+            } else {
+                if (p.process !== null) logs.push(`${prefix}: Occupied`);
+                else logs.push(`${prefix}: Too small`);
             }
+
             ptr++;
             count++;
         }
+
+        if (!found) logs.push("Wrapped around list, no suitable block found.");
     }
 
-    return candidateIndex;
+    return { candidateIndex, logs };
 }
 
-function simulationStep() {
+async function simulationStep() {
     if (!state.isSimulating) return;
 
     if (state.currentProcessIndex >= state.processes.length) {
@@ -475,31 +576,38 @@ function simulationStep() {
         return;
     }
 
-    addLog(`Attempting to allocate Process P${process.id} (${process.size}KB)...`);
+    addLog(`--- Allocating Process P${process.id} (${process.size}KB) ---`, 'info');
     renderProcesses(); // Update highlight
 
-    const partitionIndex = findPartition(process.size);
+    const { candidateIndex, logs } = findPartitionWithLog(process.size);
 
-    if (partitionIndex !== -1) {
+    // Display detailed decision logs with animation
+    for (const msg of logs) {
+        addLog(msg, 'trace');
+        if (!state.isSimulating) return; // Break if reset during wait
+        await new Promise(r => setTimeout(r, 100)); // 100ms delay per line
+    }
+
+    if (candidateIndex !== -1) {
         // Update partition
-        state.partitions[partitionIndex].process = { ...process };
+        state.partitions[candidateIndex].process = { ...process };
         // Update process
         state.processes[state.currentProcessIndex].allocated = true;
-        state.processes[state.currentProcessIndex].partitionId = state.partitions[partitionIndex].id;
+        state.processes[state.currentProcessIndex].partitionId = state.partitions[candidateIndex].id;
 
         if (state.selectedAlgorithm === ALGORITHMS.NEXT_FIT) {
-            state.lastAllocatedIndex = partitionIndex;
+            state.lastAllocatedIndex = candidateIndex;
         }
 
-        addLog(`Success: P${process.id} allocated to Block ${state.partitions[partitionIndex].id} (${state.partitions[partitionIndex].size}KB).`, 'success');
+        addLog(`Success: P${process.id} allocated to Block ${state.partitions[candidateIndex].id}.`, 'success');
     } else {
-        addLog(`Failed: No suitable partition found for P${process.id}.`, 'error');
+        addLog(`Failed: Could not allocate P${process.id}.`, 'error');
     }
 
     state.currentProcessIndex++;
     renderAll();
 
-    setTimeout(simulationStep, 1000);
+    setTimeout(simulationStep, 1000); // reduced delay since we waited during playback
 }
 
 // --- Event Listeners ---
@@ -520,6 +628,7 @@ els.btnReset.addEventListener('click', () => {
     state.currentProcessIndex = 0;
     state.lastAllocatedIndex = 0;
     state.logs = [];
+    rebuildLogs(); // Clear log container
 
     state.partitions = state.partitions.map(p => ({ ...p, process: null }));
     state.processes = state.processes.map(p => ({ ...p, allocated: false, partitionId: null }));
